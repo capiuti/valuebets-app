@@ -3,92 +3,70 @@ import streamlit as st
 import pandas as pd
 from scipy.stats import poisson
 
-st.set_page_config(page_title="Value Bets - Modelo Poisson", layout="centered")
+st.title("Modelo de Value Bets con Poisson")
 
-st.title("⚽ Value Bets con Modelo Poisson")
+uploaded_file = st.file_uploader("Sube tu archivo CSV con datos de partidos", type=["csv"])
 
-st.markdown("Sube tu archivo CSV con partidos y cuotas para detectar apuestas con valor.")
-
-uploaded_file = st.file_uploader("📥 Sube tu archivo CSV", type=["csv"])
-
-if uploaded_file:
+if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
-    
-    # Verifica columnas esenciales
-    required_cols = ['HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'B365H', 'B365D', 'B365A']
-    if not all(col in df.columns for col in required_cols):
-        st.error("El CSV debe incluir las columnas: " + ", ".join(required_cols))
+    st.write("Vista previa del archivo cargado:")
+    st.dataframe(df.head())
+
+    # Usamos las columnas adecuadas para goles y cuotas Bet365
+    home_goals_avg = df['FTHG'].mean()
+    away_goals_avg = df['FTAG'].mean()
+
+    st.write(f"Media goles local: {home_goals_avg:.2f}")
+    st.write(f"Media goles visitante: {away_goals_avg:.2f}")
+
+    max_goals = 5
+
+    home_goals_probs = [poisson.pmf(i, home_goals_avg) for i in range(max_goals+1)]
+    away_goals_probs = [poisson.pmf(i, away_goals_avg) for i in range(max_goals+1)]
+
+    prob_home_win = 0
+    prob_draw = 0
+    prob_away_win = 0
+
+    for hg in range(max_goals+1):
+        for ag in range(max_goals+1):
+            p = home_goals_probs[hg] * away_goals_probs[ag]
+            if hg > ag:
+                prob_home_win += p
+            elif hg == ag:
+                prob_draw += p
+            else:
+                prob_away_win += p
+
+    st.write(f"Probabilidad estimada local gana: {prob_home_win:.2%}")
+    st.write(f"Probabilidad estimada empate: {prob_draw:.2%}")
+    st.write(f"Probabilidad estimada visitante gana: {prob_away_win:.2%}")
+
+    value_bets = []
+
+    for idx, row in df.iterrows():
+        home_odd = row.get('B365H', None)
+        draw_odd = row.get('B365D', None)
+        away_odd = row.get('B365A', None)
+
+        if home_odd and home_odd > 0:
+            implied_prob = 1 / home_odd
+            if prob_home_win > implied_prob:
+                value_bets.append(f"Partido {idx+1}: Apostar a LOCAL, cuota {home_odd}")
+
+        if draw_odd and draw_odd > 0:
+            implied_prob = 1 / draw_odd
+            if prob_draw > implied_prob:
+                value_bets.append(f"Partido {idx+1}: Apostar a EMPATE, cuota {draw_odd}")
+
+        if away_odd and away_odd > 0:
+            implied_prob = 1 / away_odd
+            if prob_away_win > implied_prob:
+                value_bets.append(f"Partido {idx+1}: Apostar a VISITANTE, cuota {away_odd}")
+
+    st.write("### Value bets detectadas:")
+    if value_bets:
+        for bet in value_bets:
+            st.write(bet)
     else:
-        st.success("Datos cargados correctamente ✅")
-        
-        # Calcular promedios globales
-        avg_home_goals = df['FTHG'].mean()
-        avg_away_goals = df['FTAG'].mean()
-
-        # Calcular ataque y defensa para cada equipo
-        teams = df['HomeTeam'].unique()
-        stats = {}
-
-        for team in teams:
-            home = df[df['HomeTeam'] == team]
-            away = df[df['AwayTeam'] == team]
-            
-            att_home = home['FTHG'].mean() / avg_home_goals
-            def_home = home['FTAG'].mean() / avg_away_goals
-            att_away = away['FTAG'].mean() / avg_away_goals
-            def_away = away['FTHG'].mean() / avg_home_goals
-            
-            stats[team] = {
-                'att_home': att_home,
-                'def_home': def_home,
-                'att_away': att_away,
-                'def_away': def_away,
-            }
-
-        st.markdown("### 🧮 Resultados:")
-        result_table = []
-
-        for idx, row in df.iterrows():
-            home, away = row['HomeTeam'], row['AwayTeam']
-            if home not in stats or away not in stats:
-                continue
-
-            exp_home_goals = stats[home]['att_home'] * stats[away]['def_away'] * avg_home_goals
-            exp_away_goals = stats[away]['att_away'] * stats[home]['def_home'] * avg_away_goals
-
-            # Calcular probabilidades 1X2 usando Poisson
-            max_goals = 5
-            prob_home_win = prob_draw = prob_away_win = 0.0
-
-            for i in range(0, max_goals+1):
-                for j in range(0, max_goals+1):
-                    p = poisson.pmf(i, exp_home_goals) * poisson.pmf(j, exp_away_goals)
-                    if i > j:
-                        prob_home_win += p
-                    elif i == j:
-                        prob_draw += p
-                    else:
-                        prob_away_win += p
-
-            probs = [prob_home_win, prob_draw, prob_away_win]
-            odds_model = [round(1/p, 2) if p > 0 else 100 for p in probs]
-            odds_real = [row['B365H'], row['B365D'], row['B365A']]
-
-            value = []
-            for m, r in zip(odds_model, odds_real):
-                expected_value = (1/m) * r - 1
-                value.append(round(expected_value, 2))
-
-            result_table.append({
-                "Partido": f"{home} vs {away}",
-                "EV 1": value[0],
-                "EV X": value[1],
-                "EV 2": value[2],
-                "Value Bet": (
-                    "1" if value[0] > 0 else
-                    "X" if value[1] > 0 else
-                    "2" if value[2] > 0 else "-"
-                )
-            })
-
-        st.dataframe(pd.DataFrame(result_table))
+        st.write("No se detectaron apuestas con value en este dataset.")
