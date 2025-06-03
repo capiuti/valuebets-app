@@ -30,66 +30,58 @@ league_mapping = {
     'G1': ('Grecia', 'Superliga'),
 }
 
-# Subida de archivos CSV
-uploaded_files = st.file_uploader("📂 Carga tus archivos CSV de ligas", type="csv", accept_multiple_files=True)
+uploaded_files = st.file_uploader("📂 Carga tus archivos CSV", type="csv", accept_multiple_files=True)
 
 if uploaded_files:
     dfs = []
     for file in uploaded_files:
-        filename = file.name.split('.')[0]
-        country, league = league_mapping.get(filename, ('Desconocido', 'Desconocida'))
-
+        code = file.name.split('.')[0]
+        country, league = league_mapping.get(code, ('Desconocido', 'Desconocida'))
         try:
             df = pd.read_csv(file, sep=';')
             if df.shape[1] <= 1:
                 file.seek(0)
                 df = pd.read_csv(file, sep=',')
-        except Exception as e:
-            st.error(f"Error al cargar {file.name}: {e}")
-            continue
 
-        df['Country'] = country
-        df['League'] = league
-        df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
-        df['Goals_Total'] = df['FTHG'] + df['FTAG']
-        df['Goal_Diff'] = df['FTHG'] - df['FTAG']
-        dfs.append(df)
+            df['Country'] = country
+            df['League'] = league
+            df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
+            df['Goals_Total'] = df['FTHG'] + df['FTAG']
+            df['Goal_Diff'] = df['FTHG'] - df['FTAG']
+            dfs.append(df)
+        except Exception as e:
+            st.warning(f"⚠️ Error con {file.name}: {e}")
 
     if dfs:
         full_df = pd.concat(dfs, ignore_index=True)
 
-        # Filtros
-        st.sidebar.header("Filtros")
-        country_sel = st.sidebar.multiselect("🌍 País", full_df['Country'].unique())
-        league_sel = st.sidebar.multiselect("🏆 Liga", full_df['League'].unique())
-        team_sel = st.sidebar.multiselect("⚽ Equipo (local o visitante)", 
-                                          sorted(pd.concat([full_df['HomeTeam'], full_df['AwayTeam']]).unique()))
+        # PESTAÑAS
+        tab1, tab2, tab3 = st.tabs(["🏆 Por Liga", "🌍 Por País", "⚽ Por Equipo"])
 
-        df_filtered = full_df.copy()
-        if country_sel:
-            df_filtered = df_filtered[df_filtered['Country'].isin(country_sel)]
-        if league_sel:
-            df_filtered = df_filtered[df_filtered['League'].isin(league_sel)]
-        if team_sel:
-            df_filtered = df_filtered[df_filtered['HomeTeam'].isin(team_sel) | df_filtered['AwayTeam'].isin(team_sel)]
+        with tab1:
+            st.subheader("Filtrar por Liga")
+            leagues = sorted(full_df['League'].dropna().unique())
+            selected_league = st.selectbox("Selecciona una liga", leagues)
+            df_league = full_df[full_df['League'] == selected_league]
+            st.dataframe(df_league[['Date', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'FTR', 'Goals_Total']], use_container_width=True)
 
-        st.markdown("### 🧾 Resultados Filtrados")
-        st.dataframe(df_filtered[['Date', 'Country', 'League', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'Goals_Total', 'Goal_Diff', 'FTR']].sort_values(by='Date', ascending=False), use_container_width=True)
+        with tab2:
+            st.subheader("Filtrar por País")
+            countries = sorted(full_df['Country'].dropna().unique())
+            selected_country = st.selectbox("Selecciona un país", countries)
+            df_country = full_df[full_df['Country'] == selected_country]
+            st.dataframe(df_country[['Date', 'League', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'FTR']], use_container_width=True)
 
-        st.markdown("### 📈 Estadísticas")
-        avg_goals = df_filtered['Goals_Total'].mean()
-        home_wins = (df_filtered['FTR'] == 'H').sum()
-        draw = (df_filtered['FTR'] == 'D').sum()
-        away_wins = (df_filtered['FTR'] == 'A').sum()
+        with tab3:
+            st.subheader("Filtrar por Equipo")
+            teams = sorted(pd.concat([full_df['HomeTeam'], full_df['AwayTeam']]).dropna().unique())
+            selected_team = st.selectbox("Selecciona un equipo", teams)
+            df_team = full_df[(full_df['HomeTeam'] == selected_team) | (full_df['AwayTeam'] == selected_team)]
+            st.dataframe(df_team[['Date', 'League', 'HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'FTR']], use_container_width=True)
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Media de goles", f"{avg_goals:.2f}")
-        col2.metric("🏠 Victorias Local", home_wins)
-        col3.metric("🤝 Empates", draw)
-        col4.metric("🚌 Victorias Visitante", away_wins)
+else:
+    st.info("👆 Carga archivos CSV históricos de ligas europeas para comenzar.")
 
-    else:
-        st.warning("⚠️ No se pudo cargar ningún archivo válido.")
 else:
     st.info("👆 Carga archivos CSV históricos de ligas europeas para comenzar.")
 
