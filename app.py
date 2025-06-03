@@ -1,122 +1,140 @@
 import streamlit as st
 import pandas as pd
 from scipy.stats import poisson
+import os
 
+# Configuración inicial
 st.set_page_config(page_title="Value Bets Poisson + Stats", layout="wide")
-st.title("⚽ Modelo Value Bets con estadísticas personalizadas")
+st.title("⚽ Modelo Value Bets con estadísticas y filtros por país/liga")
 
+# Diccionario para identificar ligas y países a partir del nombre del archivo
+LEAGUE_MAPPING = {
+    "E0": ("Premier League", "Inglaterra"),
+    "E1": ("Championship", "Inglaterra"),
+    "E2": ("League One", "Inglaterra"),
+    "E3": ("League Two", "Inglaterra"),
+    "EC": ("National League", "Inglaterra"),
+    "SC0": ("Premiership", "Escocia"),
+    "SC1": ("Championship", "Escocia"),
+    "SC2": ("League One", "Escocia"),
+    "SC3": ("League Two", "Escocia"),
+    "D1": ("Bundesliga", "Alemania"),
+    "D2": ("Bundesliga 2", "Alemania"),
+    "SP1": ("La Liga", "España"),
+    "SP2": ("Liga Hypermotion", "España"),
+    "I1": ("Calcio", "Italia"),
+    "I2": ("Serie B", "Italia"),
+    "F1": ("Ligue 1", "Francia"),
+    "F2": ("Ligue 2", "Francia"),
+    "B1": ("Jupiler Pro League", "Bélgica"),
+    "N1": ("Eredivisie", "Holanda"),
+    "P1": ("Liga Portugal", "Portugal"),
+    "T1": ("Super Lig", "Turquía"),
+    "G1": ("Superliga", "Grecia")
+}
+
+# Carga de archivos
 uploaded_files = st.file_uploader(
-    "📂 Sube varios archivos CSV con datos históricos", 
-    type=["csv"], 
+    "📂 Sube varios archivos CSV con datos históricos",
+    type=["csv"],
     accept_multiple_files=True
 )
 
 if uploaded_files:
-    dfs = []
-
+    data_frames = []
     for file in uploaded_files:
         try:
-            df_temp = pd.read_csv(file, sep=';')
-            if df_temp.shape[1] <= 1:
+            df = pd.read_csv(file, sep=';')
+            if df.shape[1] <= 1:
                 file.seek(0)
-                df_temp = pd.read_csv(file, sep=',')
-            dfs.append(df_temp)
+                df = pd.read_csv(file, sep=',')
+            code = os.path.splitext(file.name)[0].upper()
+            league, country = LEAGUE_MAPPING.get(code, ("Desconocida", "Desconocido"))
+            df["League"] = league
+            df["Country"] = country
+            df["Code"] = code
+            data_frames.append(df)
         except Exception as e:
-            st.warning(f"❌ Error al cargar {file.name}: {e}")
+            st.warning(f"Error al cargar {file.name}: {e}")
 
-    if dfs:
-        df = pd.concat(dfs, ignore_index=True)
+    if data_frames:
+        df = pd.concat(data_frames, ignore_index=True)
 
-        st.subheader("🔍 Vista previa de datos")
-        st.dataframe(df.head())
+        st.sidebar.header("🎯 Filtros")
+        selected_country = st.sidebar.selectbox("País", sorted(df["Country"].unique()))
+        filtered_df = df[df["Country"] == selected_country]
 
-        required_cols = ['HomeTeam', 'AwayTeam', 'FTHG', 'FTAG', 'B365H', 'B365D', 'B365A']
-        if not all(col in df.columns for col in required_cols):
-            st.error(f"Faltan columnas necesarias: {', '.join(required_cols)}")
+        selected_league = st.sidebar.selectbox("Liga", sorted(filtered_df["League"].unique()))
+        league_df = filtered_df[filtered_df["League"] == selected_league]
+
+        teams = sorted(pd.unique(league_df[['HomeTeam', 'AwayTeam']].values.ravel()))
+        home_team = st.sidebar.selectbox("Equipo LOCAL", teams)
+        away_team = st.sidebar.selectbox("Equipo VISITANTE", teams)
+
+        st.subheader("📊 Estadísticas del partido")
+        home_stats = league_df[league_df['HomeTeam'] == home_team]
+        away_stats = league_df[league_df['AwayTeam'] == away_team]
+
+        home_avg_goals = home_stats['FTHG'].mean()
+        away_avg_goals = away_stats['FTAG'].mean()
+
+        st.markdown(f"- ⚽ Goles promedio local ({home_team}): **{home_avg_goals:.2f}**")
+        st.markdown(f"- ⚽ Goles promedio visitante ({away_team}): **{away_avg_goals:.2f}**")
+
+        for label, col in {
+            "Tiros": ("HS", "AS"),
+            "Tiros a puerta": ("HST", "AST"),
+            "Faltas": ("HF", "AF"),
+            "Amarillas": ("HY", "AY"),
+            "Corners": ("HC", "AC")
+        }.items():
+            if col[0] in league_df.columns and col[1] in league_df.columns:
+                l_mean = home_stats[col[0]].mean()
+                v_mean = away_stats[col[1]].mean()
+                st.markdown(f"- {label}: local {l_mean:.1f} | visitante {v_mean:.1f}")
+
+        # Modelo de Poisson
+        max_goals = 5
+        home_probs = [poisson.pmf(i, home_avg_goals) for i in range(max_goals+1)]
+        away_probs = [poisson.pmf(i, away_avg_goals) for i in range(max_goals+1)]
+
+        prob_home, prob_draw, prob_away = 0, 0, 0
+        for i in range(max_goals+1):
+            for j in range(max_goals+1):
+                p = home_probs[i] * away_probs[j]
+                if i > j:
+                    prob_home += p
+                elif i == j:
+                    prob_draw += p
+                else:
+                    prob_away += p
+
+        st.subheader("📈 Probabilidades estimadas")
+        st.write(f"🏠 {home_team}: {prob_home:.2%}")
+        st.write(f"🤝 Empate: {prob_draw:.2%}")
+        st.write(f"🚗 {away_team}: {prob_away:.2%}")
+
+        st.subheader("💸 Introduce cuotas")
+        odd_home = st.number_input("Cuota local", min_value=1.0)
+        odd_draw = st.number_input("Cuota empate", min_value=1.0)
+        odd_away = st.number_input("Cuota visitante", min_value=1.0)
+
+        st.subheader("🎯 Value Bets detectadas")
+        value_bets = []
+        if prob_home > 1 / odd_home:
+            value_bets.append(f"🏠 LOCAL ({home_team}) @ {odd_home} ✅")
+        if prob_draw > 1 / odd_draw:
+            value_bets.append(f"🤝 EMPATE @ {odd_draw} ✅")
+        if prob_away > 1 / odd_away:
+            value_bets.append(f"🚗 VISITANTE ({away_team}) @ {odd_away} ✅")
+
+        if value_bets:
+            st.success("Apuestas con valor:")
+            for vb in value_bets:
+                st.write(vb)
         else:
-            teams = sorted(pd.unique(df[['HomeTeam', 'AwayTeam']].values.ravel()))
+            st.info("No se encontraron apuestas con valor.")
 
-            st.sidebar.header("⚙️ Configuración del partido a predecir")
-            home_team = st.sidebar.selectbox("Equipo LOCAL", teams)
-            away_team = st.sidebar.selectbox("Equipo VISITANTE", teams)
+else:
+    st.info("🔁 Esperando archivos CSV para procesar.")
 
-            # Filtrar partidos con estos equipos para estadísticas
-            home_stats = df[df['HomeTeam'] == home_team]
-            away_stats = df[df['AwayTeam'] == away_team]
-
-            # Goles promedio (local y visitante)
-            home_avg_goals = home_stats['FTHG'].mean()
-            away_avg_goals = away_stats['FTAG'].mean()
-
-            # Estadísticas adicionales si están disponibles
-            extra_stats = {}
-            extras = {
-                "Tiros local (HS)": "HS",
-                "Tiros visitante (AS)": "AS",
-                "Tiros a puerta local (HST)": "HST",
-                "Tiros a puerta visitante (AST)": "AST",
-                "Faltas local (HF)": "HF",
-                "Faltas visitante (AF)": "AF",
-                "Tarjetas amarillas local (HY)": "HY",
-                "Tarjetas amarillas visitante (AY)": "AY"
-            }
-            for label, col in extras.items():
-                if col in df.columns:
-                    extra_stats[label] = (
-                        home_stats[col].mean(),
-                        away_stats[col].mean()
-                    )
-
-            st.subheader("📊 Estadísticas promedio para el partido")
-            st.write(f"⚽ Goles promedio local ({home_team}): **{home_avg_goals:.2f}**")
-            st.write(f"⚽ Goles promedio visitante ({away_team}): **{away_avg_goals:.2f}**")
-
-            for stat_label, (home_val, away_val) in extra_stats.items():
-                st.write(f"{stat_label}: local {home_val:.1f} | visitante {away_val:.1f}")
-
-            # Modelo Poisson para probabilidades
-            max_goals = 5
-            home_goal_probs = [poisson.pmf(i, home_avg_goals) for i in range(max_goals + 1)]
-            away_goal_probs = [poisson.pmf(i, away_avg_goals) for i in range(max_goals + 1)]
-
-            prob_home_win = 0
-            prob_draw = 0
-            prob_away_win = 0
-
-            for hg in range(max_goals + 1):
-                for ag in range(max_goals + 1):
-                    p = home_goal_probs[hg] * away_goal_probs[ag]
-                    if hg > ag:
-                        prob_home_win += p
-                    elif hg == ag:
-                        prob_draw += p
-                    else:
-                        prob_away_win += p
-
-            st.subheader("📈 Probabilidades estimadas")
-            st.write(f"🏠 Gana local ({home_team}): {prob_home_win:.2%}")
-            st.write(f"🤝 Empate: {prob_draw:.2%}")
-            st.write(f"🚗 Gana visitante ({away_team}): {prob_away_win:.2%}")
-
-            st.subheader("💸 Introduce cuotas para detectar Value Bets")
-            odd_home = st.number_input(f"Cuota victoria local ({home_team})", min_value=1.0, step=0.01, format="%.2f")
-            odd_draw = st.number_input("Cuota empate", min_value=1.0, step=0.01, format="%.2f")
-            odd_away = st.number_input(f"Cuota victoria visitante ({away_team})", min_value=1.0, step=0.01, format="%.2f")
-
-            value_bets = []
-            if odd_home > 0 and prob_home_win > 1 / odd_home:
-                value_bets.append(f"🏠 Apostar a LOCAL {home_team} @ {odd_home} (Value Bet!)")
-            if odd_draw > 0 and prob_draw > 1 / odd_draw:
-                value_bets.append(f"🤝 Apostar a EMPATE @ {odd_draw} (Value Bet!)")
-            if odd_away > 0 and prob_away_win > 1 / odd_away:
-                value_bets.append(f"🚗 Apostar a VISITANTE {away_team} @ {odd_away} (Value Bet!)")
-
-            if value_bets:
-                st.success("✅ ¡Se detectaron apuestas con valor!")
-                for vb in value_bets:
-                    st.write(vb)
-            else:
-                st.info("No hay apuestas con valor detectadas con las cuotas actuales.")
-
-    else:
-        st.error("No se pudo cargar ningún archivo válido.")
