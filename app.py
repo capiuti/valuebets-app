@@ -8,7 +8,7 @@ st.title("Modelo de Value Bets con Poisson")
 uploaded_file = st.file_uploader("Sube tu archivo CSV con datos de partidos", type=["csv"])
 
 if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file)
+    df = pd.read_csv(uploaded_file, sep=';')
     st.write("Vista previa del archivo cargado:")
     st.dataframe(df.head())
 
