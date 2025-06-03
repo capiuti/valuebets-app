@@ -1,28 +1,28 @@
 import streamlit as st
 import pandas as pd
 from scipy.stats import poisson
-import csv
 
 st.set_page_config(page_title="Value Bets Poisson", layout="wide")
 st.title("⚽ Modelo de Apuestas Value (Poisson)")
 
-# 🔄 Subida de múltiples archivos CSV
-uploaded_files = st.file_uploader("📂 Sube varios archivos CSV de partidos históricos", type=["csv"], accept_multiple_files=True)
+# Subida de múltiples archivos CSV
+uploaded_files = st.file_uploader(
+    "📂 Sube varios archivos CSV de partidos históricos", 
+    type=["csv"], 
+    accept_multiple_files=True
+)
 
 if uploaded_files:
     dfs = []
 
     for file in uploaded_files:
-        sample = file.read(1024).decode("utf-8")
-        file.seek(0)
         try:
-            dialect = csv.Sniffer().sniff(sample)
-            sep = dialect.delimiter
-        except:
-            sep = ';'
-
-        try:
-            df_temp = pd.read_csv(file, sep=sep)
+            # Primero intento con separador ';'
+            df_temp = pd.read_csv(file, sep=';')
+            if df_temp.shape[1] <= 1:
+                # Si solo una columna, probablemente separador incorrecto
+                file.seek(0)
+                df_temp = pd.read_csv(file, sep=',')
             dfs.append(df_temp)
         except Exception as e:
             st.warning(f"❌ Error al cargar {file.name}: {e}")
@@ -34,19 +34,16 @@ if uploaded_files:
         st.subheader("🔍 Vista previa de los datos combinados")
         st.dataframe(df.head())
 
-        # Comprobación de columnas necesarias
         required_cols = ['FTHG', 'FTAG', 'B365H', 'B365D', 'B365A']
         if not all(col in df.columns for col in required_cols):
             st.error("🚫 Faltan columnas necesarias en al menos uno de los archivos: " + ", ".join(required_cols))
         else:
-            # Calcular medias
             home_avg = df['FTHG'].mean()
             away_avg = df['FTAG'].mean()
 
             st.write(f"⚙️ Media de goles local: **{home_avg:.2f}**")
             st.write(f"⚙️ Media de goles visitante: **{away_avg:.2f}**")
 
-            # Probabilidades estimadas por modelo Poisson
             max_goals = 5
             home_probs = [poisson.pmf(i, home_avg) for i in range(max_goals + 1)]
             away_probs = [poisson.pmf(i, away_avg) for i in range(max_goals + 1)]
@@ -93,3 +90,4 @@ if uploaded_files:
                 st.info("No se detectaron apuestas con valor en estos datos.")
     else:
         st.error("No se pudo cargar ningún archivo válido.")
+
